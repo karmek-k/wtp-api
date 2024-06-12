@@ -2,7 +2,9 @@
 
 namespace App\Command;
 
+use App\Entity\Vehicle;
 use App\Enum\VehicleType;
+use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -18,7 +20,8 @@ class LoadApiDataCommand extends Command
 {
     public function __construct(
         private string $apiKey,
-        private HttpClientInterface $httpClient
+        private HttpClientInterface $httpClient,
+        private EntityManagerInterface $em,
     ) {
         parent::__construct();
     }
@@ -26,12 +29,31 @@ class LoadApiDataCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
-
         $io->writeln('Loading API data.');
         
-        $buses = $this->queryAllVehicles(VehicleType::BUS);
-        var_dump($buses);
-        // TODO: save to db
+        $repo = $this->em->getRepository(Vehicle::class);
+
+        foreach ([VehicleType::BUS, VehicleType::TRAM] as $vehicleType) {
+            $io->writeln("Getting all vehicles of type {$vehicleType->value}");
+
+            foreach ($this->queryAllVehicles($vehicleType) as $rawVehicle) {
+                $number = (int) $rawVehicle['VehicleNumber'];
+                $vehicle = $repo->findOneBy(['number' => $number]);
+
+                if ($vehicle === null) {
+                    $vehicle = new Vehicle();
+                    $vehicle->setNumber($number);
+                }
+
+                $vehicle
+                    ->setLine($rawVehicle['Lines'])
+                    ->setType($vehicleType);
+                
+                $this->em->persist($vehicle);
+            }
+        }
+
+        $this->em->flush();
 
         return Command::SUCCESS;
     }
@@ -55,6 +77,6 @@ class LoadApiDataCommand extends Command
             throw new \RuntimeException("Invalid request result: {$content['result']}");
         }
 
-        return $content;
+        return $content['result'];
     }
 }
